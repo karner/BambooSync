@@ -1,0 +1,65 @@
+[device]
+address    = "4D0C6741-2678-949F-1C7A-021B1C283EDD"
+name       = "Mathias's Bamboo"
+model      = "Columbia"           # internal Wacom model name
+serial     = "F9CACC550EE6"
+firmware   = "S110_8.0.0"
+software   = "B160929a"
+
+# Stable 6-byte identifier this host sends to the device on every connect.
+# Generated once by register.py and stored here permanently.
+[host]
+id = "b49d711a9824"
+
+# --- Services ---
+
+[services]
+wacom_offline = "ffee0001-bbaa-9988-7766-554433221100"  # offline drawing storage
+nordic_uart   = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"  # command/control channel
+sysevent      = "3a340720-c572-11e5-86c5-0002a5d5c51b"  # system events (battery, state)
+led_button    = "00001523-1212-efde-1523-785feabcd123"
+battery       = "0000180f-0000-1000-8000-00805f9b34fb"
+device_info   = "0000180a-0000-1000-8000-00805f9b34fb"
+dfu           = "00001530-1212-efde-1523-785feabcd123"
+
+# --- Characteristics ---
+
+[characteristics]
+# Nordic UART — all protocol commands/responses go through here
+uart_cmd      = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # host → device (write)
+uart_resp     = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # device → host (notify)
+
+# Offline drawing data — raw WILL 2.0 strokes arrive here during download
+offline_data  = "ffee0003-bbaa-9988-7766-554433221100"  # notify
+offline_ack   = "ffee0004-bbaa-9988-7766-554433221100"  # indicate
+
+# Live pen data (active drawing, not offline sync)
+live_pen      = "00001524-1212-efde-1523-785feabcd123"  # notify (was mislabelled "button")
+
+# System events — fires without any command
+# ef 01 00        = device ready, waiting for handshake
+# f1 02 XX 00     = battery report (XX = percent, 0x64 = 100%)
+sysevent_data = "3a340721-c572-11e5-86c5-0002a5d5c51b"  # notify
+
+led           = "00001525-1212-efde-1523-785feabcd123"  # read, indicate
+battery_level = "00002a19-0000-1000-8000-00805f9b34fb"  # read, notify
+
+# --- Protocol opcodes (NordicData format: [opcode, len, ...args]) ---
+
+[protocol]
+# Registration (one-time, long-press pairing mode)
+op_register   = 0xe7   # → [0xe7, 0x06, <host_id>]; reply 0xe4 = confirmed
+op_connect    = 0xe6   # → [0xe6, 0x06, <host_id>]; reply 0x50 = ok, 0x51 = auth error
+
+# Session setup (after connect)
+op_set_xfer   = 0xec   # → args [0x06,0x00,0x00,0x00,0x00,0x00]; routes data to ffee0003
+op_set_mode   = 0xb1   # → args [mode]; 0x00=live, 0x01=paper, 0x02=idle
+
+# Download sequence
+op_file_count = 0xc1   # → [0x00]; reply 0xc2 with count as little-u16
+op_get_strokes= 0xcc   # → [0x00]; reply 0xcf with count + timestamp
+op_download   = 0xc3   # → [0x00]; reply 0xc8; data streams on ffee0003
+op_delete     = 0xca   # → [0x00]; reply 0xb3 (ACK); clears oldest file on device
+
+# Standard ACK reply from device
+reply_ack     = 0xb3   # b3 00 = success; b3 XX = error code
