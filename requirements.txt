@@ -1,2 +1,6 @@
 bleak
 pillow
+rumps
+pyyaml
+pyobjc-framework-Vision
+pyobjc-framework-Quartz
