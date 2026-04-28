@@ -18,7 +18,8 @@
       "Bash(python -c \"import site; print\\(site.getsitepackages\\(\\)\\)\")",
       "Bash(/Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14 -c \"import PIL\")",
       "Bash(/Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14 -c \"import sys; print\\(sys.executable\\)\")",
-      "Bash(/Library/Frameworks/Python.framework/Versions/3.14/bin/pip3.14 install *)"
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.14/bin/pip3.14 install *)",
+      "Bash(python *)"
     ]
   }
 }

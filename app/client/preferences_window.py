@@ -124,7 +124,7 @@ class _TableDataSource(NSObject):
     """
 
     def init(self):
-        self = super().init()
+        self = objc.super(_TableDataSource, self).init()
         if self is None:
             return None
         self.m_rows: list[dict]    = []
@@ -185,7 +185,7 @@ class PreferencesWindowController(NSObject):
     """
 
     def init(self):
-        self = super().init()
+        self = objc.super(PreferencesWindowController, self).init()
         if self is None:
             return None
         self.m_settings: Settings          = None
