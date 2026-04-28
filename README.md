@@ -1,5 +1,8 @@
 # Bamboo Slate Sync
 
+> **⚠️ PRE-ALPHA / WORK IN PROGRESS**  
+> This project is in active development and not yet ready for production use. Features may be incomplete, APIs may change, and bugs are expected. Use at your own risk.
+
 A macOS background service that automatically detects a Wacom Bamboo Slate via Bluetooth Low Energy (BLE), downloads stored handwritten notes, renders them as images, and sends them to an AI for transcription and summarization.
 
 ## Overview
@@ -42,8 +45,8 @@ After successful download, the service sends a 'Clear Memory' ACK command to the
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd bamboo-slate
+git clone https://github.com/karner/BambooSync.git
+cd BambooSync
 
 # Install dependencies
 pip install -r requirements.txt
@@ -92,9 +95,17 @@ The service will run in the background, automatically detecting and syncing your
 
 ## License
 
-[Add your license here]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
+This project uses the following open-source libraries:
+- [bleak](https://github.com/hbldh/bleak) - MIT License (BLE communication)
+- [Pillow](https://github.com/python-pillow/Pillow) - HPND License (image processing)
+- [rumps](https://github.com/jaredks/rumps) - MIT License (macOS status bar)
+- [PyYAML](https://github.com/yaml/pyyaml) - MIT License (configuration)
+- [PyObjC](https://github.com/ronaldoussoren/pyobjc) - MIT License (macOS frameworks)
+
+Special thanks to:
 - [tuhi project](https://github.com/libratbag/tuhi) for Wacom protocol reference
 - Wacom for the Bamboo Slate hardware
