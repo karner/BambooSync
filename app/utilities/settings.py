@@ -81,6 +81,12 @@ class Settings:
     # Device
     # ------------------------------------------------------------------
 
+    def get_device_name(self) -> str:
+        return self.m_defaults.stringForKey_("device_name") or ""
+
+    def set_device_name(self, name: str) -> None:
+        self.m_defaults.setObject_forKey_(name.strip(), "device_name")
+
     def get_device_address(self) -> str:
         val = self.m_defaults.stringForKey_("device_address") or ""
         if not val:

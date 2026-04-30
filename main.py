@@ -83,6 +83,7 @@ def main() -> None:
         event_bus    = event_bus,
         settings     = settings,
         registry     = registry,
+        slate_access = slate_access,
     ).run()
 
 

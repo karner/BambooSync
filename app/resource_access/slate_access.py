@@ -16,6 +16,8 @@ import time
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 
+from typing import Callable
+
 from bleak import BleakClient, BleakScanner, BLEDevice
 
 from app.utilities.logger import get_logger
@@ -52,6 +54,14 @@ class ISlateAccess(ABC):
     @abstractmethod
     async def delete_oldest(self, session: "_SlateSession") -> None:
         """Deletes the oldest drawing from the device."""
+
+    @abstractmethod
+    async def scan_for_devices(
+        self,
+        timeout: float = 10.0,
+        on_device_found: Callable[[BLEDevice], None] | None = None,
+    ) -> list[BLEDevice]:
+        """Passive scan — calls on_device_found for each new device as it appears, returns full list at completion."""
 
 
 # ---------------------------------------------------------------------------
@@ -163,3 +173,22 @@ class SlateAccess(ISlateAccess):
 
     async def delete_oldest(self, session: _SlateSession) -> None:
         await session.ack(0xCA, b"\x00")
+
+    async def scan_for_devices(
+        self,
+        timeout: float = 10.0,
+        on_device_found: Callable[[BLEDevice], None] | None = None,
+    ) -> list[BLEDevice]:
+        seen: dict[str, BLEDevice] = {}
+
+        def _callback(device: BLEDevice, _adv) -> None:
+            if device.address not in seen:
+                seen[device.address] = device
+                if on_device_found is not None:
+                    on_device_found(device)
+
+        scanner = BleakScanner(detection_callback=_callback)
+        await scanner.start()
+        await asyncio.sleep(timeout)
+        await scanner.stop()
+        return list(seen.values())

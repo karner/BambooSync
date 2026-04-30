@@ -13,6 +13,7 @@ import rumps
 
 from app.business_logic.managers.sync_manager import ISyncManager
 from app.client.preferences_window           import PreferencesWindowController
+from app.resource_access.slate_access        import ISlateAccess
 from app.utilities.async_bridge               import AsyncBridge
 from app.utilities.event_bus                  import (
     EventBus,
@@ -52,6 +53,7 @@ class StatusBarClient(rumps.App):
         event_bus:    EventBus,
         settings:     Settings,
         registry:     HandlerRegistry,
+        slate_access: ISlateAccess,
     ) -> None:
         if sync_manager is None:
             raise ValueError("sync_manager must not be None")
@@ -61,6 +63,8 @@ class StatusBarClient(rumps.App):
             raise ValueError("settings must not be None")
         if registry is None:
             raise ValueError("registry must not be None")
+        if slate_access is None:
+            raise ValueError("slate_access must not be None")
 
         super().__init__(
             name  = "BambooSlate",
@@ -74,6 +78,7 @@ class StatusBarClient(rumps.App):
             PreferencesWindowController.alloc()
             .initWithSettings_registry_(settings, registry)
         )
+        self.m_prefs_controller.setSlateAccess_bridge_(slate_access, self.m_bridge)
 
         self.menu = [
             rumps.MenuItem("Sync Now",    callback=self.on_sync_now),

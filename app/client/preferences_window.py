@@ -10,6 +10,7 @@ immediately without restarting.
 from __future__ import annotations
 
 import objc
+import queue as _queue
 from Foundation import NSObject, NSMakeRect
 from AppKit import (
     NSApp,
@@ -188,9 +189,11 @@ class PreferencesWindowController(NSObject):
         self = objc.super(PreferencesWindowController, self).init()
         if self is None:
             return None
-        self.m_settings: Settings          = None
-        self.m_registry: HandlerRegistry   = None
-        self.m_window:   NSWindow          = None
+        self.m_settings:     Settings        = None
+        self.m_registry:     HandlerRegistry = None
+        self.m_slate_access: object         = None   # ISlateAccess
+        self.m_bridge:       object         = None   # AsyncBridge
+        self.m_window:       NSWindow       = None
 
         # Vault tab
         self.m_vault_source  = _TableDataSource.alloc().init()
@@ -202,9 +205,16 @@ class PreferencesWindowController(NSObject):
         self.m_handler_table: NSTableView   = None
         self.m_default_popup: object        = None
 
-        # Device tab
-        self.m_addr_field:    NSTextField   = None
-        self.m_timeout_field: NSTextField   = None
+        # Device tab — configured device display
+        self.m_device_name_label:  NSTextField            = None
+        self.m_device_addr_label:  NSTextField            = None
+        self.m_rescan_btn:         NSButton               = None
+        self.m_scan_status_label:  NSTextField            = None
+        self.m_scan_results_source = _TableDataSource.alloc().init()
+        self.m_scan_results_table: NSTableView            = None
+        self.m_timeout_field:      NSTextField            = None
+        self.m_device_queue:       _queue.SimpleQueue     = None
+        self.m_scan_seen_addrs:    set                    = set()
 
         # Sync tab
         self.m_auto_sync_check:        NSButton = None
@@ -222,8 +232,12 @@ class PreferencesWindowController(NSObject):
         if self is None:
             return None
         self.m_settings = settings
-        self.m_registry  = registry
+        self.m_registry = registry
         return self
+
+    def setSlateAccess_bridge_(self, slate_access, bridge) -> None:
+        self.m_slate_access = slate_access
+        self.m_bridge       = bridge
 
     # ------------------------------------------------------------------
     # Public API
@@ -311,17 +325,54 @@ class PreferencesWindowController(NSObject):
 
     def _build_device_tab(self) -> object:
         view = _blank_view()
-        y    = _TAB_CONTENT_H - 10
 
-        view.addSubview_(_label("BLE Address", _PAD, y))
-        self.m_addr_field = _field(_PAD + 110, y, 380, placeholder="e.g. 4D0C6741-2678-...")
-        view.addSubview_(self.m_addr_field)
+        # ── Configured Device ────────────────────────────────────────
+        sect1 = _label("Configured Device", _PAD, 296, 200)
+        sect1.setFont_(NSFont.boldSystemFontOfSize_(12))
+        view.addSubview_(sect1)
 
-        y -= 36
-        view.addSubview_(_label("Scan timeout", _PAD, y))
-        self.m_timeout_field = _field(_PAD + 110, y, 60, placeholder="30")
+        view.addSubview_(_label("Name", _PAD, 270))
+        self.m_device_name_label = _label("None configured", _PAD + 90, 270, 400)
+        self.m_device_name_label.setTextColor_(NSColor.secondaryLabelColor())
+        view.addSubview_(self.m_device_name_label)
+
+        view.addSubview_(_label("Address", _PAD, 246))
+        self.m_device_addr_label = _label("—", _PAD + 90, 246, 400)
+        self.m_device_addr_label.setTextColor_(NSColor.secondaryLabelColor())
+        view.addSubview_(self.m_device_addr_label)
+
+        forget_btn = _button("Forget",  _PAD,       214, 72)
+        self.m_rescan_btn = _button("Rescan", _PAD + 80, 214, 76)
+        forget_btn.setTarget_(self);       forget_btn.setAction_("onForget:")
+        self.m_rescan_btn.setTarget_(self); self.m_rescan_btn.setAction_("onRescan:")
+        view.addSubview_(forget_btn)
+        view.addSubview_(self.m_rescan_btn)
+
+        self.m_scan_status_label = _label("", _PAD + 164, 218, 260)
+        self.m_scan_status_label.setTextColor_(NSColor.secondaryLabelColor())
+        view.addSubview_(self.m_scan_status_label)
+
+        # ── Nearby Devices ───────────────────────────────────────────
+        sect2 = _label("Nearby Devices", _PAD, 186, 200)
+        sect2.setFont_(NSFont.boldSystemFontOfSize_(12))
+        view.addSubview_(sect2)
+
+        scroll, table = _scroll_with_table(_PAD, 54, _TAB_CONTENT_W - 2 * _PAD, 128)
+        _add_column(table, "name",    "Name",    200, editable=False)
+        _add_column(table, "address", "Address", 300, editable=False)
+        table.setDataSource_(self.m_scan_results_source)
+        self.m_scan_results_table = table
+        view.addSubview_(scroll)
+
+        select_btn = _button("Select", _PAD, 24, 72)
+        select_btn.setTarget_(self)
+        select_btn.setAction_("onSelectDevice:")
+        view.addSubview_(select_btn)
+
+        view.addSubview_(_label("Scan timeout", _PAD + 82, 28, 100))
+        self.m_timeout_field = _field(_PAD + 190, 24, 50, placeholder="10")
         view.addSubview_(self.m_timeout_field)
-        view.addSubview_(_label("seconds", _PAD + 178, y, 60))
+        view.addSubview_(_label("seconds", _PAD + 248, 28, 60))
         return view
 
     def _build_handlers_tab(self) -> object:
@@ -402,7 +453,10 @@ class PreferencesWindowController(NSObject):
         self.m_vault_source.set_rows(s.get_vaults())
         self.m_vault_table.reloadData()
 
-        self.m_addr_field.setStringValue_(s.get_device_address())
+        name = s.get_device_name()
+        addr = s.get_device_address()
+        self.m_device_name_label.setStringValue_(name if name else "None configured")
+        self.m_device_addr_label.setStringValue_(addr if addr else "—")
         self.m_timeout_field.setStringValue_(str(int(s.get_device_scan_timeout())))
 
         handlers = s.get_handlers()
@@ -423,7 +477,7 @@ class PreferencesWindowController(NSObject):
         s = self.m_settings
 
         s.set_vaults(self.m_vault_source.rows())
-        s.set_device_address(str(self.m_addr_field.stringValue()))
+        # Address/name are saved immediately on Select/Forget; only timeout is deferred.
         try:
             s.set_device_scan_timeout(float(self.m_timeout_field.stringValue()))
         except ValueError:
@@ -514,6 +568,100 @@ class PreferencesWindowController(NSObject):
         panel.setAllowsMultipleSelection_(False)
         if panel.runModal():
             self.m_scratch_field.setStringValue_(str(panel.URL().path()))
+
+    def onForget_(self, _sender) -> None:
+        self.m_settings.set_device_name("")
+        self.m_settings.set_device_address("")
+        self.m_device_name_label.setStringValue_("None configured")
+        self.m_device_addr_label.setStringValue_("—")
+
+    def onRescan_(self, _sender) -> None:
+        if self.m_slate_access is None or self.m_bridge is None:
+            self.m_scan_status_label.setStringValue_("Scanner not available.")
+            return
+        self.m_rescan_btn.setEnabled_(False)
+        self.m_scan_results_source.set_rows([])
+        self.m_scan_results_table.reloadData()
+        self.m_scan_seen_addrs = set()
+        self.m_device_queue    = _queue.SimpleQueue()
+        try:
+            timeout = float(self.m_timeout_field.stringValue())
+        except (ValueError, AttributeError):
+            timeout = 10.0
+        self.m_scan_status_label.setStringValue_(f"Scanning ({int(timeout)}s)…")
+
+        device_queue = self.m_device_queue
+
+        def _on_device_found(device) -> None:
+            device_queue.put({"name": device.name or "(unknown)", "address": str(device.address)})
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "drainDeviceQueue:", None, False
+            )
+
+        future = self.m_bridge.run(
+            self.m_slate_access.scan_for_devices(timeout, on_device_found=_on_device_found)
+        )
+        future.add_done_callback(self._on_scan_future_done)
+
+    def onSelectDevice_(self, _sender) -> None:
+        row = self.m_scan_results_table.selectedRow()
+        if row < 0:
+            return
+        rows = self.m_scan_results_source.rows()
+        if row >= len(rows):
+            return
+        device = rows[row]
+        name   = device.get("name", "")
+        addr   = device.get("address", "")
+        self.m_settings.set_device_name(name)
+        self.m_settings.set_device_address(addr)
+        self.m_device_name_label.setStringValue_(name or "(unknown)")
+        self.m_device_addr_label.setStringValue_(addr)
+
+    def drainDeviceQueue_(self, _) -> None:
+        """Called on main thread — flushes new devices from queue into the sorted table."""
+        if self.m_device_queue is None:
+            return
+        changed = False
+        while True:
+            try:
+                row = self.m_device_queue.get_nowait()
+            except _queue.Empty:
+                break
+            addr = row.get("address", "")
+            if addr not in self.m_scan_seen_addrs:
+                self.m_scan_seen_addrs.add(addr)
+                self.m_scan_results_source.add_row(row)
+                changed = True
+        if changed:
+            self._sort_scan_results()
+            self.m_scan_results_table.reloadData()
+            count = len(self.m_scan_results_source.rows())
+            self.m_scan_status_label.setStringValue_(f"Found {count} device(s)…")
+
+    def _sort_scan_results(self) -> None:
+        rows = self.m_scan_results_source.rows()
+        rows.sort(key=lambda r: (0 if "bamboo" in r["name"].lower() else 1, r["name"].lower()))
+        self.m_scan_results_source.set_rows(rows)
+
+    def _on_scan_future_done(self, future) -> None:
+        """Called from asyncio thread — drains any remaining devices, then signals completion."""
+        try:
+            future.result()
+        except Exception:
+            pass
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "refreshScanResults:", None, False
+        )
+
+    def refreshScanResults_(self, _) -> None:
+        """Called on main thread when scan completes — final drain, re-enable button."""
+        self.drainDeviceQueue_(None)
+        count = len(self.m_scan_results_source.rows())
+        self.m_rescan_btn.setEnabled_(True)
+        self.m_scan_status_label.setStringValue_(
+            f"Found {count} device(s)." if count else "No devices found."
+        )
 
     def onUnroutedChanged_(self, sender) -> None:
         # Simulate radio group: ensure only one is selected.
