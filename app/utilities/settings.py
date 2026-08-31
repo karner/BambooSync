@@ -98,6 +98,45 @@ class Settings:
     def set_device_address(self, address: str) -> None:
         self.m_defaults.setObject_forKey_(address.strip(), "device_address")
 
+    def get_host_id(self) -> bytes:
+        """
+        The persistent 6-byte identity this Mac presents to the Slate.
+
+        Seeded from config.toml [host].id on first run, because changing it
+        would invalidate an existing registration on the device. Generated once
+        and stored only when nothing is configured anywhere — in that case the
+        Slate has to be paired before it will talk to us.
+        """
+        host_id = self._decode_host_id(self.m_defaults.stringForKey_("host_id"))
+        if host_id is not None:
+            return host_id
+
+        try:
+            from app.utilities.config import load_config
+            host_id = self._decode_host_id(load_config().get("host", {}).get("id"))
+        except Exception as exc:
+            _log.warning("Could not read host id from config.toml: %s", exc)
+
+        if host_id is None:
+            host_id = os.urandom(6)
+            _log.info(
+                "Generated host id %s — pair the Slate in Preferences before syncing",
+                host_id.hex(),
+            )
+        self.m_defaults.setObject_forKey_(host_id.hex(), "host_id")
+        return host_id
+
+    @staticmethod
+    def _decode_host_id(value) -> bytes | None:
+        """Returns the 6 bytes for a 12-character hex string, or None if unusable."""
+        text = str(value or "").strip()
+        if len(text) != 12:
+            return None
+        try:
+            return bytes.fromhex(text)
+        except ValueError:
+            return None
+
     def seed_device_from_config(self) -> None:
         """
         First launch only: copies the factory device from config.toml into

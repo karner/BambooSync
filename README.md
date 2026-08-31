@@ -52,6 +52,23 @@ cd BambooSync
 pip install -r requirements.txt
 ```
 
+## Pairing
+
+The Slate only accepts a Mac it has been registered with. To pair from the app:
+
+1. Launch the app and open **Preferences ▸ Device**
+2. Click **Rescan** and select your Slate under *Nearby Devices*
+3. Hold the Slate's button until it flashes (pairing mode)
+4. Click **Pair**, then press the Slate's button once when prompted
+
+The paired device becomes the configured one and is remembered in Preferences.
+Re-pair the same way if syncing ever reports that this Mac is not registered.
+
+The `[device]` block in `config.toml` seeds Preferences on first launch only —
+after that the device is managed in Preferences and edits to `config.toml` have
+no effect. `register.py` does the same registration from the terminal and is kept
+only as a fallback.
+
 ## Configuration
 
 Create a `config.toml` file with your AI API credentials:

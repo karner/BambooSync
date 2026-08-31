@@ -20,7 +20,6 @@ from app.business_logic.managers.ingest_manager      import IngestManager
 from app.business_logic.managers.sync_manager        import SyncManager
 from app.resource_access.slate_access                import SlateAccess
 from app.resource_access.vault_access                import VaultAccess
-from app.utilities.config                            import load_config
 from app.utilities.event_bus                         import (
     EventBus,
     StatusUpdateEvent,
@@ -47,8 +46,6 @@ def _print_handler(event):
 
 
 def _build_manager() -> SyncManager:
-    cfg     = load_config()
-    host_id = bytes.fromhex(cfg["host"]["id"])
 
     event_bus = EventBus()
     for event_type in (
@@ -68,6 +65,7 @@ def _build_manager() -> SyncManager:
 
     settings = Settings()
     settings.apply_on_startup()      # seeds the device on first run, exports vault paths
+    host_id  = settings.get_host_id()
 
     ingest_manager = IngestManager(
         vision_engine        = VisionEngine(),

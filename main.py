@@ -16,7 +16,6 @@ from app.business_logic.managers.sync_manager        import SyncManager
 from app.client.status_bar_client                    import StatusBarClient
 from app.resource_access.slate_access                import SlateAccess
 from app.resource_access.vault_access                import VaultAccess
-from app.utilities.config                            import load_config
 from app.utilities.event_bus                         import EventBus
 from app.utilities.handler_registry                  import HandlerRegistry, OllamaHandler
 from app.utilities.settings                          import Settings
@@ -40,11 +39,9 @@ def _build_handler_registry(settings: Settings) -> HandlerRegistry:
 
 def main() -> None:
     settings = Settings()
-    settings.apply_on_startup()          # propagates VAULT_*_PATH env vars
+    settings.apply_on_startup()          # seeds first-run defaults, exports VAULT_*_PATH
 
-    cfg     = load_config()
-    host_id = bytes.fromhex(cfg["host"]["id"])
-
+    host_id   = settings.get_host_id()
     event_bus = EventBus()
     registry  = _build_handler_registry(settings)
 
