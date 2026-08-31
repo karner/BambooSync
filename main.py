@@ -13,6 +13,7 @@ from app.business_logic.engines.validation_engine    import ValidationEngine
 from app.business_logic.engines.vision_engine        import VisionEngine
 from app.business_logic.managers.ingest_manager      import IngestManager
 from app.business_logic.managers.sync_manager        import SyncManager
+from app.business_logic.managers.watcher_manager     import WatcherManager
 from app.client.status_bar_client                    import StatusBarClient
 from app.resource_access.slate_access                import SlateAccess
 from app.resource_access.vault_access                import VaultAccess
@@ -75,6 +76,12 @@ def main() -> None:
         settings       = settings,
     )
 
+    watcher = WatcherManager(
+        slate_access = slate_access,
+        event_bus    = event_bus,
+        settings     = settings,
+    )
+
     # Client
     StatusBarClient(
         sync_manager = sync_manager,
@@ -82,6 +89,7 @@ def main() -> None:
         settings     = settings,
         registry     = registry,
         slate_access = slate_access,
+        watcher      = watcher,
     ).run()
 
 

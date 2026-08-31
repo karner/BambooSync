@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import rumps
 
-from app.business_logic.managers.sync_manager import ISyncManager
+from app.business_logic.managers.sync_manager    import ISyncManager
+from app.business_logic.managers.watcher_manager import IWatcherManager
 from app.client.preferences_window           import PreferencesWindowController
 from app.client.sync_window                  import SyncWindowController
 from app.resource_access.slate_access        import ISlateAccess
 from app.utilities.async_bridge               import AsyncBridge
 from app.utilities.event_bus                  import (
+    DeviceDetectedEvent,
     EventBus,
     NoteIngestedEvent,
     NoteIngestFailedEvent,
@@ -39,6 +41,24 @@ _ICONS: dict[SyncStatus, str] = {
 }
 
 
+# rumps registers a single process-wide notification handler, so it needs a
+# module reference back to the running client.
+_ACTIVE_CLIENT: "StatusBarClient | None" = None
+
+
+@rumps.notifications
+def _on_notification_clicked(info) -> None:
+    """Called on the main thread when the user clicks one of our notifications."""
+    if _ACTIVE_CLIENT is None:
+        return
+    try:
+        action = dict(info or {}).get("action", "")
+    except Exception:
+        return
+    if action == "open_sync":
+        _ACTIVE_CLIENT.m_sync_window.show()
+
+
 class StatusBarClient(rumps.App):
     """
     macOS menu bar application.
@@ -55,6 +75,7 @@ class StatusBarClient(rumps.App):
         settings:     Settings,
         registry:     HandlerRegistry,
         slate_access: ISlateAccess,
+        watcher:      IWatcherManager,
     ) -> None:
         if sync_manager is None:
             raise ValueError("sync_manager must not be None")
@@ -66,6 +87,8 @@ class StatusBarClient(rumps.App):
             raise ValueError("registry must not be None")
         if slate_access is None:
             raise ValueError("slate_access must not be None")
+        if watcher is None:
+            raise ValueError("watcher must not be None")
 
         super().__init__(
             name  = "BambooSlate",
@@ -73,6 +96,7 @@ class StatusBarClient(rumps.App):
         )
         self.m_sync_manager = sync_manager
         self.m_event_bus    = event_bus
+        self.m_watcher      = watcher
         self.m_bridge       = AsyncBridge()
         self.m_last_note    = rumps.MenuItem("No notes yet", callback=None)
         self.m_prefs_controller = (
@@ -96,6 +120,13 @@ class StatusBarClient(rumps.App):
 
         self._subscribe_events()
 
+        global _ACTIVE_CLIENT
+        _ACTIVE_CLIENT = self
+
+        # The loop itself checks the "watch for device" preference each tick, so
+        # it is always started and idles while the preference is off.
+        self.m_bridge.run(self.m_watcher.run())
+
     # ------------------------------------------------------------------
     # Menu callbacks
     # ------------------------------------------------------------------
@@ -117,6 +148,7 @@ class StatusBarClient(rumps.App):
         self.m_event_bus.subscribe(NoteIngestedEvent,     self._on_note_ingested)
         self.m_event_bus.subscribe(NoteIngestFailedEvent, self._on_note_ingest_failed)
         self.m_event_bus.subscribe(StatusUpdateEvent,     self._on_status_update)
+        self.m_event_bus.subscribe(DeviceDetectedEvent,   self._on_device_detected)
 
     def _on_sync_started(self, _event: SyncStartedEvent) -> None:
         self._set_status(SyncStatus.SCANNING, "Scanning...")
@@ -134,6 +166,15 @@ class StatusBarClient(rumps.App):
 
     def _on_note_ingest_failed(self, event: NoteIngestFailedEvent) -> None:
         self.m_last_note.title = f"Failed: {event.reason[:60]}"
+
+    def _on_device_detected(self, event: DeviceDetectedEvent) -> None:
+        self.m_last_note.title = f"{event.name} nearby — click to sync"
+        rumps.notification(
+            title    = "Bamboo Slate",
+            subtitle = f"{event.name} is nearby",
+            message  = "Click to review and import your notes.",
+            data     = {"action": "open_sync"},
+        )
 
     def _on_status_update(self, event: StatusUpdateEvent) -> None:
         status = SyncStatus.SYNCING if event.busy else SyncStatus.IDLE

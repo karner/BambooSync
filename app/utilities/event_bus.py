@@ -57,6 +57,14 @@ class NoteIngestFailedEvent(PipelineEvent):
 
 
 @dataclass
+class DeviceDetectedEvent(PipelineEvent):
+    """The configured Slate has appeared on BLE. Announcement only — nothing
+    has been read from the device."""
+    address: str
+    name:    str
+
+
+@dataclass
 class StatusUpdateEvent(PipelineEvent):
     """
     Carries a short human-readable status string for the menu bar.

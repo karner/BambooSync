@@ -422,8 +422,30 @@ class PreferencesWindowController(NSObject):
         view = _blank_view()
         y    = _TAB_CONTENT_H - 10
 
-        self.m_auto_sync_check = _checkbox("Auto-sync when Slate is detected", _PAD, y)
+        self.m_auto_sync_check = _checkbox("Notify me when the Slate is nearby", _PAD, y)
         view.addSubview_(self.m_auto_sync_check)
+
+        # Syncing is destructive — delete_oldest is the only way to advance the
+        # device file pointer — so say so where the user turns the watcher on.
+        y -= 20
+        warn1 = _label(
+            "Syncing removes pages from the Slate: each note is deleted from the",
+            _PAD + 18, y, _TAB_CONTENT_W - _PAD - 36, 14,
+        )
+        y -= 16
+        warn2 = _label(
+            "device as it is downloaded. Notes you do not import are kept on this",
+            _PAD + 18, y, _TAB_CONTENT_W - _PAD - 36, 14,
+        )
+        y -= 16
+        warn3 = _label(
+            "Mac in the scratch folder below, under spool/.",
+            _PAD + 18, y, _TAB_CONTENT_W - _PAD - 36, 14,
+        )
+        for warn in (warn1, warn2, warn3):
+            warn.setFont_(NSFont.systemFontOfSize_(11))
+            warn.setTextColor_(NSColor.secondaryLabelColor())
+            view.addSubview_(warn)
 
         y -= 36
         view.addSubview_(_label("Unrouted notes", _PAD, y + 2))
