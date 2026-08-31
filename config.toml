@@ -1,3 +1,5 @@
+# Seeds Preferences on first launch only. Once the app has run, the device is
+# managed in Preferences > Device and edits here have no effect.
 [device]
 address    = "4D0C6741-2678-949F-1C7A-021B1C283EDD"
 name       = "Mathias's Bamboo"

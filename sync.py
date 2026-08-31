@@ -66,6 +66,9 @@ def _build_manager() -> SyncManager:
 
     vault_access = VaultAccess()
 
+    settings = Settings()
+    settings.apply_on_startup()      # seeds the device on first run, exports vault paths
+
     ingest_manager = IngestManager(
         vision_engine        = VisionEngine(),
         validation_engine    = ValidationEngine(),
@@ -81,7 +84,7 @@ def _build_manager() -> SyncManager:
         render_engine  = RenderEngine(),
         ingest_manager = ingest_manager,
         event_bus      = event_bus,
-        settings       = Settings(),
+        settings       = settings,
     )
 
 

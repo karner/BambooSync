@@ -88,18 +88,40 @@ class Settings:
         self.m_defaults.setObject_forKey_(name.strip(), "device_name")
 
     def get_device_address(self) -> str:
-        val = self.m_defaults.stringForKey_("device_address") or ""
-        if not val:
-            # Fall back to factory default in config.toml.
-            try:
-                from app.utilities.config import load_config
-                val = load_config()["device"]["address"]
-            except Exception:
-                pass
-        return val
+        """
+        The configured device. Preferences is authoritative: config.toml only
+        seeds this on first launch (see seed_device_from_config). An empty
+        result means the user cleared the device, not that none was ever set.
+        """
+        return self.m_defaults.stringForKey_("device_address") or ""
 
     def set_device_address(self, address: str) -> None:
         self.m_defaults.setObject_forKey_(address.strip(), "device_address")
+
+    def seed_device_from_config(self) -> None:
+        """
+        First launch only: copies the factory device from config.toml into
+        Preferences. Keyed on the plist entry being absent rather than empty,
+        so a device cleared in Preferences stays cleared instead of silently
+        reverting to config.toml on the next sync.
+        """
+        if self.m_defaults.objectForKey_("device_address") is not None:
+            return
+        try:
+            from app.utilities.config import load_config
+            device = load_config().get("device", {})
+        except Exception as exc:
+            _log.warning("Could not seed device from config.toml: %s", exc)
+            return
+
+        address = str(device.get("address", "")).strip()
+        if not address:
+            return
+        self.set_device_address(address)
+        name = str(device.get("name", "")).strip()
+        if name and not self.get_device_name():
+            self.set_device_name(name)
+        _log.info("Seeded device %s from config.toml", address)
 
     def get_device_scan_timeout(self) -> float:
         val = self.m_defaults.floatForKey_("device_scan_timeout")
@@ -169,5 +191,6 @@ class Settings:
     # ------------------------------------------------------------------
 
     def apply_on_startup(self) -> None:
-        """Propagates saved vault paths to environment on every app launch."""
+        """Seeds first-run defaults and propagates saved vault paths to environment."""
+        self.seed_device_from_config()
         self._propagate_vault_env_vars(self.get_vaults())
