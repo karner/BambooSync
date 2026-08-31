@@ -25,17 +25,15 @@ from app.utilities.event_bus                       import (
     SyncStartedEvent,
     StatusUpdateEvent,
 )
+from app.utilities.logger                          import get_logger
 from app.utilities.models                          import NotePreview, SyncResult
 from app.utilities.settings                        import Settings
 
+_log = get_logger(__name__)
 
-# Temporary PNG storage during one sync session; files are not kept after ingest.
-_SCRATCH_DIR = Path(__file__).parent.parent.parent.parent / "_scratch"
 
-# Raw WILL bytes spooled here by list_notes before the note is deleted from the
-# device. Deleting is the only way to advance the device file pointer, so this is
-# the sole remaining copy until import succeeds.
-_SPOOL_DIR = _SCRATCH_DIR / "spool"
+# Fallback working directory, used when Preferences names no scratch directory.
+_DEFAULT_SCRATCH_DIR = Path(__file__).parent.parent.parent.parent / "_scratch"
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +169,7 @@ class SyncManager(ISyncManager):
             await self.m_event_bus.publish(SyncFailedEvent(reason=reason))
             raise RuntimeError(reason)
 
-        _SPOOL_DIR.mkdir(parents=True, exist_ok=True)
+        spool_dir = self._spool_dir()
 
         previews: list[NotePreview] = []
         async with self.m_slate_access.connect(device) as session:
@@ -185,7 +183,7 @@ class SyncManager(ISyncManager):
 
                 # Spool before deleting: delete_oldest is irreversible and is the
                 # only way to reach the next note.
-                raw_path = _SPOOL_DIR / f"{self._label(ts)}_{i:03d}.bin"
+                raw_path = spool_dir / f"{self._label(ts)}_{i:03d}.bin"
                 raw_path.write_bytes(raw)
 
                 await self.m_slate_access.delete_oldest(session)
@@ -206,7 +204,7 @@ class SyncManager(ISyncManager):
 
     async def import_notes(self, previews: list[NotePreview]) -> SyncResult:
         await self.m_event_bus.publish(SyncStartedEvent())
-        _SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+        scratch_dir = self._scratch_dir()
 
         synced = 0
         failed = 0
@@ -217,7 +215,7 @@ class SyncManager(ISyncManager):
                 StatusUpdateEvent(f"Importing note {i + 1}/{len(previews)}…")
             )
             try:
-                png_path = _SCRATCH_DIR / f"{self._label(preview.timestamp)}.png"
+                png_path = scratch_dir / f"{self._label(preview.timestamp)}.png"
                 strokes  = self.m_parse_engine.parse(preview.raw_bytes)
                 drawn    = self.m_render_engine.render(strokes, png_path)
                 if drawn:
@@ -236,6 +234,32 @@ class SyncManager(ISyncManager):
         return result
 
     # ------------------------------------------------------------------
+
+    def _scratch_dir(self) -> Path:
+        """
+        Working directory for temporary PNGs. Read from Preferences per use so a
+        change takes effect without restarting, and falls back to the project
+        _scratch/ when unset or when the configured path cannot be created.
+        """
+        configured = self.m_settings.get_scratch_dir().strip()
+        if configured:
+            base = Path(configured).expanduser()
+            try:
+                base.mkdir(parents=True, exist_ok=True)
+                return base
+            except OSError as exc:
+                _log.warning(
+                    "Scratch directory %s unusable (%s) — falling back to %s",
+                    base, exc, _DEFAULT_SCRATCH_DIR,
+                )
+        _DEFAULT_SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+        return _DEFAULT_SCRATCH_DIR
+
+    def _spool_dir(self) -> Path:
+        """Raw WILL bytes live here from download until the note is ingested."""
+        spool = self._scratch_dir() / "spool"
+        spool.mkdir(parents=True, exist_ok=True)
+        return spool
 
     async def _find_device(self):
         """
@@ -271,10 +295,10 @@ class SyncManager(ISyncManager):
 
     async def _sync_one(self, session, index: int, total: int) -> bool:
         """Downloads, parses, renders, ingests, and deletes one drawing. Returns success."""
-        _SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+        scratch_dir = self._scratch_dir()
 
         _, ts   = await self.m_slate_access.stroke_metadata(session)
-        png_path = _SCRATCH_DIR / f"{self._label(ts)}.png"
+        png_path = scratch_dir / f"{self._label(ts)}.png"
 
         raw     = await self.m_slate_access.download_oldest(session)
         strokes = self.m_parse_engine.parse(raw)

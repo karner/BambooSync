@@ -233,7 +233,7 @@ class SyncWindowController(NSObject):
         # say where the raw data is, so an unimported note does not look lost.
         caption = _label(
             "These notes have been removed from the Slate. Anything you do not "
-            "import is kept on this Mac in _scratch/spool/.",
+            "import is kept on this Mac, in spool/ inside the scratch folder.",
             _PAD, 48, _W - 2 * _PAD, 14,
         )
         caption.setFont_(NSFont.systemFontOfSize_(11))
