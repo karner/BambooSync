@@ -183,7 +183,8 @@ class SyncWindowController(NSObject):
         cv.addSubview_(self.m_status_label)
 
         # ── Table ─────────────────────────────────────────────────────
-        table_y = 52
+        # Room below the table for the caption explaining the device is cleared.
+        table_y = 70
         table_h = _H - 54 - table_y
 
         table = NSTableView.alloc().initWithFrame_(NSMakeRect(0, 0, _W - 2 * _PAD, table_h))
@@ -225,6 +226,19 @@ class SyncWindowController(NSObject):
         scroll.setHasHorizontalScroller_(False)
         scroll.setBorderType_(2)
         cv.addSubview_(scroll)
+
+        # ── Caption ────────────────────────────────────────────────────
+        # By the time this list is drawn the notes are already off the device:
+        # delete_oldest is the only way to advance the file pointer. Say so, and
+        # say where the raw data is, so an unimported note does not look lost.
+        caption = _label(
+            "These notes have been removed from the Slate. Anything you do not "
+            "import is kept on this Mac in _scratch/spool/.",
+            _PAD, 48, _W - 2 * _PAD, 14,
+        )
+        caption.setFont_(NSFont.systemFontOfSize_(11))
+        caption.setTextColor_(NSColor.secondaryLabelColor())
+        cv.addSubview_(caption)
 
         # ── Bottom button row ──────────────────────────────────────────
         self.m_select_all_btn = _button("Select All",    _PAD,           16, 90)
