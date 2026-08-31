@@ -97,6 +97,7 @@ class StatusBarClient(rumps.App):
         self.m_sync_manager = sync_manager
         self.m_event_bus    = event_bus
         self.m_watcher      = watcher
+        self.m_settings     = settings
         self.m_bridge       = AsyncBridge()
         self.m_last_note    = rumps.MenuItem("No notes yet", callback=None)
         self.m_prefs_controller = (
@@ -156,7 +157,10 @@ class StatusBarClient(rumps.App):
     def _on_sync_completed(self, event: SyncCompletedEvent) -> None:
         msg = f"{event.synced_count} note(s) synced"
         self._set_status(SyncStatus.IDLE, msg)
-        rumps.notification(title="Bamboo Slate", subtitle="", message=msg)
+        if self.m_settings.get_show_count_in_menu() and event.synced_count:
+            self.title = f"{_ICONS[SyncStatus.IDLE]} {event.synced_count}"
+        if self.m_settings.get_notify_sync_complete():
+            rumps.notification(title="Bamboo Slate", subtitle="", message=msg)
 
     def _on_sync_failed(self, event: SyncFailedEvent) -> None:
         self._set_status(SyncStatus.ERROR, event.reason)
@@ -166,6 +170,13 @@ class StatusBarClient(rumps.App):
 
     def _on_note_ingest_failed(self, event: NoteIngestFailedEvent) -> None:
         self.m_last_note.title = f"Failed: {event.reason[:60]}"
+        # "quarantine" files the note silently; "notify" says so out loud.
+        if self.m_settings.get_unrouted_action() == "notify":
+            rumps.notification(
+                title    = "Bamboo Slate",
+                subtitle = "Note could not be filed",
+                message  = event.reason[:180],
+            )
 
     def _on_device_detected(self, event: DeviceDetectedEvent) -> None:
         self.m_last_note.title = f"{event.name} nearby — click to sync"
