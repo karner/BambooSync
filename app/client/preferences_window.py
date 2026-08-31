@@ -261,6 +261,10 @@ class PreferencesWindowController(NSObject):
         self.m_window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(0, 0, _W, _H), style, NSBackingStoreBuffered, False,
         )
+        # Windows from alloc/init default to releasedWhenClosed=YES: the red
+        # close button would free the window while self.m_window still points
+        # at it, crashing the next show().
+        self.m_window.setReleasedWhenClosed_(False)
         self.m_window.setTitle_("Preferences")
         self.m_window.center()
 

@@ -26,11 +26,16 @@ from app.utilities.event_bus                       import (
     SyncStartedEvent,
     StatusUpdateEvent,
 )
-from app.utilities.models                          import SyncResult
+from app.utilities.models                          import NotePreview, SyncResult
 
 
 # Temporary PNG storage during one sync session; files are not kept after ingest.
 _SCRATCH_DIR = Path(__file__).parent.parent.parent.parent / "_scratch"
+
+# Raw WILL bytes spooled here by list_notes before the note is deleted from the
+# device. Deleting is the only way to advance the device file pointer, so this is
+# the sole remaining copy until import succeeds.
+_SPOOL_DIR = _SCRATCH_DIR / "spool"
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +54,21 @@ class ISyncManager(ABC):
     @abstractmethod
     async def sync_once(self) -> SyncResult:
         """Downloads and processes exactly one drawing (oldest on device)."""
+
+    @abstractmethod
+    async def list_notes(self) -> list[NotePreview]:
+        """
+        Connects to the Slate and downloads all stored drawings.
+        Each note is deleted from the device as part of iteration (protocol requirement —
+        delete_oldest is the only way to advance the file pointer), so the raw bytes are
+        spooled to disk first and stay there until import succeeds.
+        Returns NotePreview objects; does NOT run the ingest pipeline.
+        Raises RuntimeError when the device cannot be found.
+        """
+
+    @abstractmethod
+    async def import_notes(self, previews: list[NotePreview]) -> SyncResult:
+        """Runs parse→render→ingest for the given in-memory NotePreview objects."""
 
 
 # ---------------------------------------------------------------------------
@@ -144,15 +164,97 @@ class SyncManager(ISyncManager):
         await self.m_event_bus.publish(SyncCompletedEvent(synced_count=count))
         return SyncResult(synced_count=count, failed_count=0 if success else 1)
 
+    async def list_notes(self) -> list[NotePreview]:
+        await self.m_event_bus.publish(StatusUpdateEvent("Connecting to Slate…"))
+
+        device = await self.m_slate_access.find_device(self.m_device_address, self._SCAN_TIMEOUT)
+        if device is None:
+            reason = "Bamboo Slate not found — switch the device on and try again."
+            await self.m_event_bus.publish(SyncFailedEvent(reason=reason))
+            raise RuntimeError(reason)
+
+        _SPOOL_DIR.mkdir(parents=True, exist_ok=True)
+
+        previews: list[NotePreview] = []
+        async with self.m_slate_access.connect(device) as session:
+            count = await self.m_slate_access.file_count(session)
+            for i in range(count):
+                await self.m_event_bus.publish(
+                    StatusUpdateEvent(f"Fetching note {i + 1}/{count}…")
+                )
+                stroke_bytes, ts = await self.m_slate_access.stroke_metadata(session)
+                raw              = await self.m_slate_access.download_oldest(session)
+
+                # Spool before deleting: delete_oldest is irreversible and is the
+                # only way to reach the next note.
+                raw_path = _SPOOL_DIR / f"{self._label(ts)}_{i:03d}.bin"
+                raw_path.write_bytes(raw)
+
+                await self.m_slate_access.delete_oldest(session)
+                previews.append(NotePreview(
+                    index             = i,
+                    timestamp         = ts,
+                    stroke_byte_count = stroke_bytes,
+                    raw_bytes         = raw,
+                    raw_path          = raw_path,
+                ))
+
+        message = (
+            f"{len(previews)} note(s) ready to import"
+            if previews else "No notes stored on device"
+        )
+        await self.m_event_bus.publish(StatusUpdateEvent(message, busy=False))
+        return previews
+
+    async def import_notes(self, previews: list[NotePreview]) -> SyncResult:
+        await self.m_event_bus.publish(SyncStartedEvent())
+        _SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+
+        synced = 0
+        failed = 0
+        errors: list[str] = []
+
+        for i, preview in enumerate(previews):
+            await self.m_event_bus.publish(
+                StatusUpdateEvent(f"Importing note {i + 1}/{len(previews)}…")
+            )
+            try:
+                png_path = _SCRATCH_DIR / f"{self._label(preview.timestamp)}.png"
+                strokes  = self.m_parse_engine.parse(preview.raw_bytes)
+                drawn    = self.m_render_engine.render(strokes, png_path)
+                if drawn:
+                    await self.m_event_bus.publish(
+                        NoteDownloadedEvent(png_path=str(png_path), timestamp=preview.timestamp)
+                    )
+                    await self.m_ingest_manager.process_note(png_path, preview.timestamp)
+                synced += 1
+                self._discard_spool(preview)      # ingested; raw copy no longer needed
+            except Exception as exc:
+                failed += 1
+                errors.append(str(exc))           # spool file is kept for retry
+
+        result = SyncResult(synced_count=synced, failed_count=failed, errors=errors)
+        await self.m_event_bus.publish(SyncCompletedEvent(synced_count=synced))
+        return result
+
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _label(timestamp: int) -> str:
+        return time.strftime("%Y%m%d_%H%M%S", time.gmtime(timestamp))
+
+    @staticmethod
+    def _discard_spool(preview: NotePreview) -> None:
+        """Removes the spooled raw copy once the note is safely ingested."""
+        if preview.raw_path is not None:
+            preview.raw_path.unlink(missing_ok=True)
 
     async def _sync_one(self, session, index: int, total: int) -> bool:
         """Downloads, parses, renders, ingests, and deletes one drawing. Returns success."""
         _SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
 
         _, ts   = await self.m_slate_access.stroke_metadata(session)
-        label   = time.strftime("%Y%m%d_%H%M%S", time.gmtime(ts))
-        png_path = _SCRATCH_DIR / f"{label}.png"
+        png_path = _SCRATCH_DIR / f"{self._label(ts)}.png"
 
         raw     = await self.m_slate_access.download_oldest(session)
         strokes = self.m_parse_engine.parse(raw)

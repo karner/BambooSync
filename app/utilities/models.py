@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from collections import namedtuple
+from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +78,19 @@ class VaultRules:
     accepted_types:   list[str]                    = field(default_factory=list)
     type_definitions: dict[str, TypeDefinition]    = field(default_factory=dict)
     diagram_types:    dict[str, DiagramConfig]      = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Note preview (in-memory after download, before ingest decision)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class NotePreview:
+    index:             int
+    timestamp:         int          # unix
+    stroke_byte_count: int
+    raw_bytes:         bytes
+    raw_path:          Path | None = None   # spooled copy; survives cancel/crash
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,133 @@
+{
+  "version": "1",
+
+  "_readme": [
+    "This file defines how each document type is processed by the ingest pipeline.",
+    "Edit document_types to add new types or change existing ones, then ask for implementation.",
+    "",
+    "HEADER FORMAT (first line of every handwritten note):",
+    "  VAULT_NAME  DOC_TYPE  [key=value ...]",
+    "  e.g.  WORK TASK  project=atlas  due=2026-06-01",
+    "",
+    "STAGES (in execution order):",
+    "  vision         Apple Vision OCR — crops top 20% and extracts header line",
+    "  parse_header   Splits header into vault_name, doc_type, fields dict",
+    "  validate       Checks required_fields against vault _slate-config.md",
+    "  transcribe     AI transcription of the full note body",
+    "  diagram        AI diagram conversion using type-constrained prompt (DIAGRAM only)",
+    "  write_ingest   Writes formatted Markdown to {vault}/ingest/",
+    "",
+    "FALLBACK STAGES (injected automatically, not listed per-type):",
+    "  write_pending  Written when validate fails — holds partial note for follow-up",
+    "",
+    "NULL values mean: inherit from defaults."
+  ],
+
+  "defaults": {
+    "handler": "ollama-gemma",
+
+    "vision": {
+      "header_fraction": 0.20,
+      "recognition_level": "accurate"
+    },
+
+    "prompts": {
+      "transcription": "Transcribe all handwritten text in this image exactly as written. Preserve line breaks. Output only the transcribed text.",
+      "diagram": "Convert the handwritten diagram in this image to {format} syntax.\nYou may ONLY use the following elements — do not introduce any syntax not in this list:\n{elements}\n\nOutput only the raw {format} code block. No explanation."
+    },
+
+    "on_vision_failure":    "quarantine",
+    "on_unparseable_header": "quarantine",
+    "on_missing_vault":     "quarantine",
+    "on_missing_fields":    "write_pending"
+  },
+
+  "document_types": {
+
+    "TASK": {
+      "description": "Creates a new task in the target vault.",
+      "stages": ["vision", "parse_header", "validate", "transcribe", "write_ingest"],
+      "required_fields": ["project"],
+      "optional_fields": ["due", "priority", "assignee", "area"],
+      "transcription_prompt": "Transcribe this handwritten task note. Identify and preserve: task title, description, and any acceptance criteria or sub-steps listed. Format as structured Markdown.",
+      "handler": null,
+      "on_missing_fields": null
+    },
+
+    "TASK_UPDATE": {
+      "description": "Updates an existing task — appends status change or new information.",
+      "stages": ["vision", "parse_header", "validate", "transcribe", "write_ingest"],
+      "required_fields": ["ref"],
+      "optional_fields": ["status", "note", "blocker"],
+      "transcription_prompt": "Transcribe this handwritten task update. Identify: the referenced task (ref field), any status change, and the update content. Output as structured Markdown.",
+      "handler": null,
+      "on_missing_fields": null
+    },
+
+    "WORKFLOW": {
+      "description": "Documents a workflow — process steps, decision points, AI subtask preparation.",
+      "stages": ["vision", "parse_header", "validate", "transcribe", "write_ingest"],
+      "required_fields": ["project", "phase"],
+      "optional_fields": ["depends_on", "trigger", "owner"],
+      "transcription_prompt": "Transcribe this handwritten workflow document. Preserve headings, numbered steps, decision branches, and any listed subtasks. Format as structured Markdown with clear hierarchy.",
+      "handler": null,
+      "on_missing_fields": null
+    },
+
+    "DIAGRAM": {
+      "description": "Converts a handwritten diagram to Mermaid or PlantUML code.",
+      "stages": ["vision", "parse_header", "validate", "diagram", "write_ingest"],
+      "required_fields": ["type"],
+      "optional_fields": ["project", "title", "format"],
+      "transcription_prompt": null,
+      "handler": null,
+      "on_missing_fields": null,
+
+      "diagram_formats": {
+        "flowchart": {
+          "format": "mermaid",
+          "allowed_elements": [
+            "flowchart TD", "flowchart LR",
+            "-->", "---", "-.->",
+            "subgraph", "end",
+            "[label]", "(label)", "{label}", "((label))"
+          ]
+        },
+        "sequence": {
+          "format": "mermaid",
+          "allowed_elements": [
+            "sequenceDiagram",
+            "participant", "actor",
+            "->>", "-->>"
+          ]
+        },
+        "class": {
+          "format": "mermaid",
+          "allowed_elements": [
+            "classDiagram",
+            "class", "<|--", "-->", "..", "o--", "*--"
+          ]
+        },
+        "component": {
+          "format": "plantuml",
+          "allowed_elements": [
+            "@startuml", "@enduml",
+            "component", "interface", "package",
+            "--", "..>", "-->", "..>"
+          ]
+        }
+      }
+    },
+
+    "NOTE": {
+      "description": "Free-form note — transcribed and filed without field validation.",
+      "stages": ["vision", "parse_header", "transcribe", "write_ingest"],
+      "required_fields": [],
+      "optional_fields": ["project", "tags", "area"],
+      "transcription_prompt": null,
+      "handler": null,
+      "on_missing_fields": null
+    }
+
+  }
+}

@@ -58,8 +58,12 @@ class NoteIngestFailedEvent(PipelineEvent):
 
 @dataclass
 class StatusUpdateEvent(PipelineEvent):
-    """Carries a short human-readable status string for the menu bar."""
+    """
+    Carries a short human-readable status string for the menu bar.
+    busy=False marks a terminal status: work has stopped, icon returns to idle.
+    """
     message: str
+    busy:    bool = True
 
 
 # ---------------------------------------------------------------------------

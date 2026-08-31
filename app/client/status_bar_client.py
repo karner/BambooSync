@@ -13,6 +13,7 @@ import rumps
 
 from app.business_logic.managers.sync_manager import ISyncManager
 from app.client.preferences_window           import PreferencesWindowController
+from app.client.sync_window                  import SyncWindowController
 from app.resource_access.slate_access        import ISlateAccess
 from app.utilities.async_bridge               import AsyncBridge
 from app.utilities.event_bus                  import (
@@ -79,6 +80,10 @@ class StatusBarClient(rumps.App):
             .initWithSettings_registry_(settings, registry)
         )
         self.m_prefs_controller.setSlateAccess_bridge_(slate_access, self.m_bridge)
+        self.m_sync_window = (
+            SyncWindowController.alloc()
+            .initWithSyncManager_bridge_(sync_manager, self.m_bridge)
+        )
 
         self.menu = [
             rumps.MenuItem("Sync Now",    callback=self.on_sync_now),
@@ -96,8 +101,7 @@ class StatusBarClient(rumps.App):
     # ------------------------------------------------------------------
 
     def on_sync_now(self, _) -> None:
-        future = self.m_bridge.run(self.m_sync_manager.sync_all())
-        future.add_done_callback(self._on_sync_future_done)
+        self.m_sync_window.show()
 
     def on_preferences(self, _) -> None:
         self.m_prefs_controller.show()
@@ -132,7 +136,9 @@ class StatusBarClient(rumps.App):
         self.m_last_note.title = f"Failed: {event.reason[:60]}"
 
     def _on_status_update(self, event: StatusUpdateEvent) -> None:
-        self._set_status(SyncStatus.SYNCING, event.message)
+        status = SyncStatus.SYNCING if event.busy else SyncStatus.IDLE
+        self.title = _ICONS[status]
+        self.m_last_note.title = event.message
 
     # ------------------------------------------------------------------
 
@@ -140,7 +146,3 @@ class StatusBarClient(rumps.App):
         self.title = _ICONS[status]
         self.m_last_note.title = tooltip if status != SyncStatus.IDLE else self.m_last_note.title
 
-    def _on_sync_future_done(self, future) -> None:
-        exc = future.exception()
-        if exc:
-            self._set_status(SyncStatus.ERROR, str(exc))
