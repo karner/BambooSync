@@ -1,0 +1,32 @@
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Virtual environments ──────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── macOS ─────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+._*
+
+# ── App bundle / packaging output ─────────────────────────────────────
+build/
+dist/
+
+# ── Runtime working directories ───────────────────────────────────────
+# Temporary PNGs during a sync session, and raw WILL bytes spooled by
+# list_notes() until the note is successfully ingested.
+_scratch/
+_pending/
+*.log
+
+# ── Local machine config (not shared) ─────────────────────────────────
+.claude/settings.local.json
