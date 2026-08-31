@@ -17,7 +17,6 @@ from app.business_logic.engines.render_engine      import IRenderEngine
 from app.business_logic.engines.stroke_parse_engine import IStrokeParseEngine
 from app.business_logic.managers.ingest_manager    import IIngestManager
 from app.resource_access.slate_access              import ISlateAccess
-from app.utilities.config                          import load_config
 from app.utilities.event_bus                       import (
     EventBus,
     NoteDownloadedEvent,
@@ -27,6 +26,7 @@ from app.utilities.event_bus                       import (
     StatusUpdateEvent,
 )
 from app.utilities.models                          import NotePreview, SyncResult
+from app.utilities.settings                        import Settings
 
 
 # Temporary PNG storage during one sync session; files are not kept after ingest.
@@ -87,8 +87,6 @@ class SyncManager(ISyncManager):
     or SyncFailedEvent via the EventBus.
     """
 
-    _SCAN_TIMEOUT = 30.0  # seconds to wait for device to appear on BLE
-
     def __init__(
         self,
         slate_access:   ISlateAccess,
@@ -96,6 +94,7 @@ class SyncManager(ISyncManager):
         render_engine:  IRenderEngine,
         ingest_manager: IIngestManager,
         event_bus:      EventBus,
+        settings:       Settings,
     ) -> None:
         if slate_access is None:
             raise ValueError("slate_access must not be None")
@@ -107,24 +106,24 @@ class SyncManager(ISyncManager):
             raise ValueError("ingest_manager must not be None")
         if event_bus is None:
             raise ValueError("event_bus must not be None")
+        if settings is None:
+            raise ValueError("settings must not be None")
 
         self.m_slate_access   = slate_access
         self.m_parse_engine   = parse_engine
         self.m_render_engine  = render_engine
         self.m_ingest_manager = ingest_manager
         self.m_event_bus      = event_bus
-
-        cfg = load_config()
-        self.m_device_address = cfg["device"]["address"]
+        self.m_settings       = settings
 
     async def sync_all(self) -> SyncResult:
         await self.m_event_bus.publish(SyncStartedEvent())
         await self.m_event_bus.publish(StatusUpdateEvent("Scanning for Slate..."))
 
-        device = await self.m_slate_access.find_device(self.m_device_address, self._SCAN_TIMEOUT)
+        device, reason = await self._find_device()
         if device is None:
-            await self.m_event_bus.publish(SyncFailedEvent(reason="Device not found"))
-            return SyncResult(synced_count=0, failed_count=0, errors=["Device not found"])
+            await self.m_event_bus.publish(SyncFailedEvent(reason=reason))
+            return SyncResult(synced_count=0, failed_count=0, errors=[reason])
 
         synced = 0
         failed = 0
@@ -152,10 +151,10 @@ class SyncManager(ISyncManager):
     async def sync_once(self) -> SyncResult:
         await self.m_event_bus.publish(SyncStartedEvent())
 
-        device = await self.m_slate_access.find_device(self.m_device_address, self._SCAN_TIMEOUT)
+        device, reason = await self._find_device()
         if device is None:
-            await self.m_event_bus.publish(SyncFailedEvent(reason="Device not found"))
-            return SyncResult(synced_count=0, failed_count=1, errors=["Device not found"])
+            await self.m_event_bus.publish(SyncFailedEvent(reason=reason))
+            return SyncResult(synced_count=0, failed_count=1, errors=[reason])
 
         async with self.m_slate_access.connect(device) as session:
             success = await self._sync_one(session, 1, 1)
@@ -167,9 +166,8 @@ class SyncManager(ISyncManager):
     async def list_notes(self) -> list[NotePreview]:
         await self.m_event_bus.publish(StatusUpdateEvent("Connecting to Slate…"))
 
-        device = await self.m_slate_access.find_device(self.m_device_address, self._SCAN_TIMEOUT)
+        device, reason = await self._find_device()
         if device is None:
-            reason = "Bamboo Slate not found — switch the device on and try again."
             await self.m_event_bus.publish(SyncFailedEvent(reason=reason))
             raise RuntimeError(reason)
 
@@ -238,6 +236,28 @@ class SyncManager(ISyncManager):
         return result
 
     # ------------------------------------------------------------------
+
+    async def _find_device(self):
+        """
+        Resolves the configured device from Settings and scans for it.
+
+        Read on every sync rather than cached at construction, so a device
+        picked in Preferences takes effect without restarting the app.
+        Returns (device, reason); device is None when no device is configured
+        or the scan found nothing, and reason says which.
+        """
+        address = self.m_settings.get_device_address().strip()
+        if not address:
+            return None, "No device selected — choose one in Preferences ▸ Device."
+
+        timeout = self.m_settings.get_device_scan_timeout()
+        device  = await self.m_slate_access.find_device(address, timeout)
+        if device is None:
+            return None, (
+                f"Bamboo Slate not found at {address} — "
+                f"switch the device on and try again."
+            )
+        return device, ""
 
     @staticmethod
     def _label(timestamp: int) -> str:

@@ -30,6 +30,7 @@ from app.utilities.event_bus                         import (
     NoteIngestFailedEvent,
 )
 from app.utilities.handler_registry                  import HandlerRegistry, OllamaHandler
+from app.utilities.settings                          import Settings
 
 
 def _print_handler(event):
@@ -80,6 +81,7 @@ def _build_manager() -> SyncManager:
         render_engine  = RenderEngine(),
         ingest_manager = ingest_manager,
         event_bus      = event_bus,
+        settings       = Settings(),
     )
 
 

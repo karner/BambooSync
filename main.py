@@ -75,6 +75,7 @@ def main() -> None:
         render_engine  = render_engine,
         ingest_manager = ingest_manager,
         event_bus      = event_bus,
+        settings       = settings,
     )
 
     # Client
