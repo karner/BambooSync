@@ -24,6 +24,12 @@ from app.utilities.logger import get_logger
 
 _log = get_logger(__name__)
 
+# Pairing opcodes. Registration happens before the 0xE6 connect handshake, so it
+# runs on its own client rather than through _SlateSession.
+_OP_REGISTER      = 0xE7   # → [0xE7, 0x06, <host_id>]; device then waits for a button press
+_REPLY_REGISTERED = 0xE4   # device confirms the host is registered
+_REPLY_AUTH_ERROR = 0x51   # device rejected the host
+
 
 # ---------------------------------------------------------------------------
 # Interface
@@ -54,6 +60,20 @@ class ISlateAccess(ABC):
     @abstractmethod
     async def delete_oldest(self, session: "_SlateSession") -> None:
         """Deletes the oldest drawing from the device."""
+
+    @abstractmethod
+    async def register(
+        self,
+        device: BLEDevice,
+        on_awaiting_button: Callable[[], None] | None = None,
+        timeout: float = 30.0,
+    ) -> None:
+        """
+        Registers this host with a Slate held in pairing mode (long-press until it
+        flashes). Calls on_awaiting_button once the request is sent and the user
+        must press the device button. Raises RuntimeError if refused or not
+        confirmed within timeout.
+        """
 
     @abstractmethod
     async def scan_for_devices(
@@ -138,7 +158,10 @@ class SlateAccess(ISlateAccess):
             reply_op, _ = await session.send(0xE6, self.m_host_id)
             if reply_op not in (0x50, 0xB3):
                 if reply_op == 0x51:
-                    raise RuntimeError("Auth failed — re-run register.py")
+                    raise RuntimeError(
+                        "This Mac is not registered with the Slate — "
+                        "pair it again in Preferences ▸ Device."
+                    )
                 raise RuntimeError(f"Unexpected connect reply: 0x{reply_op:02x}")
 
             await session.ack(0xEC, bytes([0x06, 0x00, 0x00, 0x00, 0x00, 0x00]))
@@ -173,6 +196,49 @@ class SlateAccess(ISlateAccess):
 
     async def delete_oldest(self, session: _SlateSession) -> None:
         await session.ack(0xCA, b"\x00")
+
+    async def register(
+        self,
+        device: BLEDevice,
+        on_awaiting_button: Callable[[], None] | None = None,
+        timeout: float = 30.0,
+    ) -> None:
+        replies: asyncio.Queue = asyncio.Queue()
+
+        def _on_notify(_sender: object, data: bytearray) -> None:
+            if data:
+                replies.put_nowait(data[0])
+
+        async with BleakClient(device) as client:
+            await client.start_notify(_SlateSession._UART_RESP, _on_notify)
+
+            cmd = bytes([_OP_REGISTER, len(self.m_host_id)]) + self.m_host_id
+            await client.write_gatt_char(_SlateSession._UART_CMD, cmd, response=False)
+
+            if on_awaiting_button is not None:
+                on_awaiting_button()
+
+            # The Slate emits unsolicited notifications (device ready, battery), so
+            # read until the registration verdict arrives rather than trusting the
+            # first frame to be ours.
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError(
+                        "No button press received — hold the Slate button until it "
+                        "flashes, then pair again."
+                    )
+                try:
+                    opcode = await asyncio.wait_for(replies.get(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    continue
+                if opcode == _REPLY_REGISTERED:
+                    _log.info("Registered host %s with %s", self.m_host_id.hex(), device.address)
+                    return
+                if opcode == _REPLY_AUTH_ERROR:
+                    raise RuntimeError("Device refused registration — is it in pairing mode?")
+                _log.debug("Ignoring 0x%02x while awaiting registration", opcode)
 
     async def scan_for_devices(
         self,

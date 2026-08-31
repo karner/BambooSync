@@ -84,7 +84,7 @@ The service will run in the background, automatically detecting and syncing your
 - `download.py` — Data download from device
 - `parse.py` — WILL 2.0 format parser
 - `sync.py` — Synchronization logic
-- `register.py` — Device registration and pairing
+- `register.py` — Standalone device registration (superseded by Preferences ▸ Device ▸ Pair)
 
 ## Requirements
 

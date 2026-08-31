@@ -209,11 +209,16 @@ class PreferencesWindowController(NSObject):
         self.m_device_name_label:  NSTextField            = None
         self.m_device_addr_label:  NSTextField            = None
         self.m_rescan_btn:         NSButton               = None
+        self.m_pair_btn:           NSButton               = None
         self.m_scan_status_label:  NSTextField            = None
         self.m_scan_results_source = _TableDataSource.alloc().init()
         self.m_scan_results_table: NSTableView            = None
         self.m_timeout_field:      NSTextField            = None
         self.m_device_queue:       _queue.SimpleQueue     = None
+        self.m_pair_addr:          str                    = ""
+        self.m_pair_name:          str                    = ""
+        self.m_pair_status:        str                    = ""
+        self.m_pair_error:         str                    = ""
         self.m_scan_seen_addrs:    set                    = set()
 
         # Sync tab
@@ -373,10 +378,17 @@ class PreferencesWindowController(NSObject):
         select_btn.setAction_("onSelectDevice:")
         view.addSubview_(select_btn)
 
-        view.addSubview_(_label("Scan timeout", _PAD + 82, 28, 100))
-        self.m_timeout_field = _field(_PAD + 190, 24, 50, placeholder="10")
+        # Pairing replaces the old register.py script: hold the Slate button
+        # until it flashes, click Pair, then press the button once when asked.
+        self.m_pair_btn = _button("Pair", _PAD + 80, 24, 72)
+        self.m_pair_btn.setTarget_(self)
+        self.m_pair_btn.setAction_("onPair:")
+        view.addSubview_(self.m_pair_btn)
+
+        view.addSubview_(_label("Scan timeout", _PAD + 164, 28, 100))
+        self.m_timeout_field = _field(_PAD + 272, 24, 50, placeholder="10")
         view.addSubview_(self.m_timeout_field)
-        view.addSubview_(_label("seconds", _PAD + 248, 28, 60))
+        view.addSubview_(_label("seconds", _PAD + 330, 28, 60))
         return view
 
     def _build_handlers_tab(self) -> object:
@@ -588,10 +600,7 @@ class PreferencesWindowController(NSObject):
         self.m_scan_results_table.reloadData()
         self.m_scan_seen_addrs = set()
         self.m_device_queue    = _queue.SimpleQueue()
-        try:
-            timeout = float(self.m_timeout_field.stringValue())
-        except (ValueError, AttributeError):
-            timeout = 10.0
+        timeout = self._scan_timeout()
         self.m_scan_status_label.setStringValue_(f"Scanning ({int(timeout)}s)…")
 
         device_queue = self.m_device_queue
@@ -606,6 +615,89 @@ class PreferencesWindowController(NSObject):
             self.m_slate_access.scan_for_devices(timeout, on_device_found=_on_device_found)
         )
         future.add_done_callback(self._on_scan_future_done)
+
+    def _scan_timeout(self) -> float:
+        try:
+            return float(self.m_timeout_field.stringValue())
+        except (ValueError, AttributeError):
+            return 10.0
+
+    def _pair_target(self) -> tuple[str, str]:
+        """
+        The device to pair with: the highlighted scan result, else the already
+        configured device (so a Slate that lost its registration can be re-paired
+        without scanning first). Returns (address, name).
+        """
+        row  = self.m_scan_results_table.selectedRow()
+        rows = self.m_scan_results_source.rows()
+        if 0 <= row < len(rows):
+            return rows[row].get("address", ""), rows[row].get("name", "")
+        return self.m_settings.get_device_address(), self.m_settings.get_device_name()
+
+    def onPair_(self, _sender) -> None:
+        if self.m_slate_access is None or self.m_bridge is None:
+            self.m_scan_status_label.setStringValue_("Bluetooth not available.")
+            return
+
+        address, name = self._pair_target()
+        if not address:
+            self.m_scan_status_label.setStringValue_(
+                "Select a nearby device first, or configure one."
+            )
+            return
+
+        self.m_pair_btn.setEnabled_(False)
+        self.m_scan_status_label.setStringValue_(
+            "Hold the Slate button until it flashes…"
+        )
+
+        slate           = self.m_slate_access
+        timeout         = self._scan_timeout()
+        self.m_pair_addr = address
+        self.m_pair_name = name
+
+        def _awaiting_button() -> None:
+            # Fired from the asyncio thread — hop to the main thread to draw.
+            self.m_pair_status = "Press the button on the Slate now…"
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "applyPairStatus:", None, False
+            )
+
+        async def _do_pair() -> None:
+            device = await slate.find_device(address, timeout)
+            if device is None:
+                raise RuntimeError(
+                    f"{address} not found — hold the button until it flashes, then pair."
+                )
+            await slate.register(device, on_awaiting_button=_awaiting_button)
+
+        future = self.m_bridge.run(_do_pair())
+        future.add_done_callback(self._on_pair_future_done)
+
+    def applyPairStatus_(self, _) -> None:
+        self.m_scan_status_label.setStringValue_(getattr(self, "m_pair_status", ""))
+
+    def _on_pair_future_done(self, future) -> None:
+        exc = future.exception()
+        self.m_pair_error = str(exc) if exc else ""
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "applyPairResult:", None, False
+        )
+
+    def applyPairResult_(self, _) -> None:
+        self.m_pair_btn.setEnabled_(True)
+        error = getattr(self, "m_pair_error", "")
+        if error:
+            self.m_scan_status_label.setStringValue_(error)
+            return
+
+        # A paired device is the device to sync with.
+        name = self.m_pair_name or "(unknown)"
+        self.m_settings.set_device_address(self.m_pair_addr)
+        self.m_settings.set_device_name(self.m_pair_name)
+        self.m_device_name_label.setStringValue_(name)
+        self.m_device_addr_label.setStringValue_(self.m_pair_addr)
+        self.m_scan_status_label.setStringValue_(f"Paired with {name}.")
 
     def onSelectDevice_(self, _sender) -> None:
         row = self.m_scan_results_table.selectedRow()
